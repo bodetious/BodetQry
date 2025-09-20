@@ -36,7 +36,7 @@
 -   **Options**:
     
     -   `-d, --decode` → Decode rows into JSON instead of showing raw hex.
-        
+    -  `-s, --stats`    → Show row group statistics only
 -   **Example (hex mode)**:
     
     `bq read data/test.bq` 
@@ -45,6 +45,9 @@
     
     `bq read data/test.bq --decode` 
     
+-   **Example (stats only)**:
+    
+    `bq read data/test.bq --stats` 
 
 ----------
 

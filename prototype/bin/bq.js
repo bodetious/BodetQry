@@ -26,10 +26,30 @@ program
 
 program
   .command("read <bqFile>")
-  .description("Read a .bq file (raw hex by default, decoded with --decode)")
+  .description("Read a .bq file (raw hex by default, decoded with --decode, stats with --stats)")
   .option("-d, --decode", "Decode rows instead of showing raw hex")
+  .option("-s, --stats", "Show row group statistics only")
   .action((bqFile, opts) => {
-    readFile(path.resolve(bqFile), opts.decode);
+    const resolved = path.resolve(bqFile);
+    if (opts.stats) {
+      // Custom lightweight stats display
+      const fs = require("fs");
+      const data = fs.readFileSync(resolved);
+      const headerLen = data.readUInt32LE(0);
+      const header = JSON.parse(data.slice(4, 4 + headerLen).toString());
+
+      console.log("📊 Row Group Statistics:");
+      header.rowGroups.forEach((rg, idx) => {
+        console.log(`\nRowGroup #${idx + 1} (rows=${rg.rowCount}):`);
+        Object.entries(rg.stats).forEach(([col, st]) => {
+          console.log(
+            `  ${col.padEnd(20)} min=${st.min} | max=${st.max} | nulls=${st.nullCount}`
+          );
+        });
+      });
+    } else {
+      readFile(resolved, opts.decode);
+    }
   });
 
 program.parse(process.argv);
