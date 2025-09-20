@@ -3,6 +3,7 @@
 
 const fs = require("fs");
 const zlib = require("zlib");
+const path = require("path");
 
 function encodeColumn(values, type) {
   const buffers = [];
@@ -29,7 +30,7 @@ function encodeColumn(values, type) {
         const len = Buffer.alloc(4); len.writeUInt32LE(0, 0);
         buffers.push(len);
       } else {
-        const strBuf = Buffer.from(v, "utf8");
+        const strBuf = Buffer.from(String(v), "utf8");
         const len = Buffer.alloc(4); len.writeUInt32LE(strBuf.length, 0);
         buffers.push(len, strBuf);
       }
@@ -39,7 +40,7 @@ function encodeColumn(values, type) {
   return Buffer.concat(buffers);
 }
 
-function writeFile(path, schema, rows, rowsPerGroup = 2) {
+function writeFile(path, schema, rows, rowsPerGroup = 100) {
   const headerBase = {
     version: 1,
     columns: schema,
@@ -169,29 +170,55 @@ function readFile(path, decode = false) {
   }
 }
 
-// Hardcoded schema + rows for now (Milestone 1 demo)
-const schema = [
-  { name: "ID", type: "int", nullable: false },
-  { name: "Name", type: "string", nullable: true }
-];
+// -----------------------------
+// CSV Loader
+// -----------------------------
+function loadCsv(filePath) {
+  const text = fs.readFileSync(filePath, "utf8");
+  const lines = text.trim().split("\n");
+  const headers = lines[0].split(",");
+  const rows = lines.slice(1).map(line => {
+    const parts = line.split(",");
+    const row = {};
+    headers.forEach((h, i) => {
+      const key = h.trim();
+      const val = parts[i] ? parts[i].trim() : null;
+      if (val === "" || val == null) {
+        row[key] = null;
+      } else if (/^-?\d+$/.test(val)) {
+        // strictly decimal integer
+        row[key] = parseInt(val, 10);
+      } else {
+        // everything else as string
+        row[key] = val;
+      }
+    });
+    return row;
+  });
+  return { headers, rows };
+}
 
-const rows = [
-  { ID: 1, Name: "Alice" },
-  { ID: 1, Name: "Alice" },
-  { ID: 2, Name: "Bob" },
-  { ID: 3, Name: "Carol" }
-];
-
+// -----------------------------
+// CLI Entrypoint
+// -----------------------------
 const mode = process.argv[2];
 const extra = process.argv[3];
 const outFile = "data/test.bq";
 
 if (mode === "write") {
-  writeFile(outFile, schema, rows, 2);
+  const csvPath = path.join(__dirname, "../data/customers-1000.csv");
+  const { headers, rows } = loadCsv(csvPath);
+
+  const schema = headers.map(h => {
+    const allNums = rows.every(r => typeof r[h] === "number" || r[h] === null);
+    return { name: h, type: allNums ? "int" : "string", nullable: true };
+  });
+
+  writeFile(outFile, schema, rows, 100);
 } else if (mode === "read" && extra === "decode") {
   readFile(outFile, true);
 } else if (mode === "read") {
   readFile(outFile, false);
 } else {
-  console.log("Usage: npm run write | npm run read | npm run read decode");
+  console.log("Usage: npm run write | npm run read | npm run read:decoded");
 }
