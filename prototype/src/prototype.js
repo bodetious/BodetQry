@@ -40,7 +40,7 @@ function encodeColumn(values, type) {
 }
 
 function writeFile(path, schema, rows, rowsPerGroup = 2) {
-  const header = {
+  const headerBase = {
     version: 1,
     columns: schema,
     rowGroups: [],
@@ -59,25 +59,42 @@ function writeFile(path, schema, rows, rowsPerGroup = 2) {
     const uncompressed = Buffer.concat(encodedCols);
     const compressed = zlib.deflateSync(uncompressed);
     rowGroupBlobs.push(compressed);
-    header.rowGroups.push({
-      offset: 0, // will be filled later
+
+    headerBase.rowGroups.push({
+      offset: 0, // placeholder
       compressedLength: compressed.length,
       rowCount: group.length
     });
   }
 
-  let headerJson = Buffer.from(JSON.stringify(header));
-  let headerLen = Buffer.alloc(4); headerLen.writeUInt32LE(headerJson.length, 0);
+  // Function to compute final header and offsets
+  function buildHeaderWithOffsets(rowGroupBlobs, base) {
+    let header = JSON.parse(JSON.stringify(base)); // deep copy
+    let headerJson = Buffer.from(JSON.stringify(header));
+    let curOffset = 4 + headerJson.length;
 
-  let curOffset = 4 + headerJson.length;
-  header.rowGroups.forEach((rg, idx) => {
-    rg.offset = curOffset;
-    curOffset += rowGroupBlobs[idx].length;
-  });
+    header.rowGroups.forEach((rg, idx) => {
+      rg.offset = curOffset;
+      curOffset += rowGroupBlobs[idx].length;
+    });
 
-  // rewrite header with offsets
-  headerJson = Buffer.from(JSON.stringify(header));
-  headerLen = Buffer.alloc(4); headerLen.writeUInt32LE(headerJson.length, 0);
+    return header;
+  }
+
+  // Recompute header until stable
+  let header = headerBase;
+  let prevLength = 0;
+  let headerJson = Buffer.alloc(0);
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    header = buildHeaderWithOffsets(rowGroupBlobs, header);
+    headerJson = Buffer.from(JSON.stringify(header));
+    if (headerJson.length === prevLength) break; // stable
+    prevLength = headerJson.length;
+  }
+
+  const headerLen = Buffer.alloc(4);
+  headerLen.writeUInt32LE(headerJson.length, 0);
 
   const fileBuf = Buffer.concat([headerLen, headerJson, ...rowGroupBlobs]);
   fs.writeFileSync(path, fileBuf);
