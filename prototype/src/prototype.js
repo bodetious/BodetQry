@@ -50,6 +50,7 @@ function writeFile(path, schema, rows, rowsPerGroup = 2) {
 
   const rowGroupBlobs = [];
 
+  // Build row groups
   for (let i = 0; i < rows.length; i += rowsPerGroup) {
     const group = rows.slice(i, i + rowsPerGroup);
     const encodedCols = schema.map(col => {
@@ -102,18 +103,70 @@ function writeFile(path, schema, rows, rowsPerGroup = 2) {
   console.log(`✅ File written to ${path}`);
 }
 
-function readFile(path) {
+function decodeRowGroup(buffer, schema, rowCount) {
+  const rows = Array.from({ length: rowCount }, () => ({}));
+  let offset = 0;
+
+  for (let col of schema) {
+    const encodingType = buffer.readUInt8(offset);
+    offset += 1;
+
+    if (col.type === "int") {
+      if (encodingType === 1) {
+        // RLE
+        const val = buffer.readInt32LE(offset); offset += 4;
+        const run = buffer.readUInt32LE(offset); offset += 4;
+        for (let i = 0; i < run; i++) rows[i][col.name] = val;
+      } else {
+        // Raw
+        for (let i = 0; i < rowCount; i++) {
+          const v = buffer.readInt32LE(offset); offset += 4;
+          rows[i][col.name] = v;
+        }
+      }
+    } else if (col.type === "string") {
+      // Raw only for now
+      for (let i = 0; i < rowCount; i++) {
+        const strlen = buffer.readUInt32LE(offset); offset += 4;
+        if (strlen === 0) {
+          rows[i][col.name] = null;
+        } else {
+          const s = buffer.toString("utf8", offset, offset + strlen);
+          offset += strlen;
+          rows[i][col.name] = s;
+        }
+      }
+    }
+  }
+
+  return rows;
+}
+
+function readFile(path, decode = false) {
   const data = fs.readFileSync(path);
   const headerLen = data.readUInt32LE(0);
   const header = JSON.parse(data.slice(4, 4 + headerLen).toString());
 
   console.log("📄 Header:", header);
 
+  let allRows = [];
   header.rowGroups.forEach(rg => {
     const comp = data.slice(rg.offset, rg.offset + rg.compressedLength);
     const decomp = zlib.inflateSync(comp);
-    console.log(`RowGroup @${rg.offset}, rows=${rg.rowCount}, raw(hex)=${decomp.toString("hex")}`);
+
+    if (!decode) {
+      console.log(
+        `RowGroup @${rg.offset}, rows=${rg.rowCount}, raw(hex)=${decomp.toString("hex")}`
+      );
+    } else {
+      const rows = decodeRowGroup(decomp, header.columns, rg.rowCount);
+      allRows = allRows.concat(rows);
+    }
   });
+
+  if (decode) {
+    console.log("✅ Decoded Rows:", JSON.stringify(allRows, null, 2));
+  }
 }
 
 // Hardcoded schema + rows for now (Milestone 1 demo)
@@ -129,14 +182,16 @@ const rows = [
   { ID: 3, Name: "Carol" }
 ];
 
-// Mode selection from package.json scripts
 const mode = process.argv[2];
+const extra = process.argv[3];
 const outFile = "data/test.bq";
 
 if (mode === "write") {
   writeFile(outFile, schema, rows, 2);
+} else if (mode === "read" && extra === "decode") {
+  readFile(outFile, true);
 } else if (mode === "read") {
-  readFile(outFile);
+  readFile(outFile, false);
 } else {
-  console.log("Usage: npm run write | npm run read");
+  console.log("Usage: npm run write | npm run read | npm run read decode");
 }

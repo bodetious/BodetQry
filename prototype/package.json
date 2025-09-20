@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "write": "node src/prototype.js write",
-    "read": "node src/prototype.js read"
+    "read": "node src/prototype.js read",
+    "read:decoded": "node src/prototype.js read decode"
   },
   "keywords": [
     "bodetqry",
@@ -17,7 +18,7 @@
     "compression",
     "nodejs"
   ],
-  "author": "Dalton Bodet",
+  "author": "Your Name",
   "license": "MIT",
   "dependencies": {},
   "devDependencies": {}
