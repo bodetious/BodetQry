@@ -1,0 +1,24 @@
+{
+  "name": "bodetqry-prototype",
+  "version": "0.1.0",
+  "description": "Prototype Node.js reader/writer for the BodetQry (.bq) file format",
+  "main": "src/prototype.js",
+  "type": "commonjs",
+  "scripts": {
+    "write": "node src/prototype.js write",
+    "read": "node src/prototype.js read"
+  },
+  "keywords": [
+    "bodetqry",
+    "bq",
+    "csv-alternative",
+    "file-format",
+    "powerquery",
+    "compression",
+    "nodejs"
+  ],
+  "author": "Dalton Bodet",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {}
+}
