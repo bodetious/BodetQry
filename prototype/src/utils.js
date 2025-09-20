@@ -164,14 +164,50 @@ function writeFile(path, schema, rows, rowsPerGroup = 100) {
   console.log(`✅ File written to ${path}`);
 }
 
-function readFile(path, decode = false) {
+function parseFilter(expr) {
+  // Very simple parser: supports "Col > N", "Col < N", "Col = 'string'"
+  const match = expr.match(/^(.+?)\s*(=|>|<)\s*['"]?(.+?)['"]?$/);
+  if (!match) return null;
+  return { col: match[1].trim(), op: match[2], value: match[3] };
+}
+
+function rowGroupMightMatch(stats, filter) {
+  if (!stats[filter.col]) return true; // unknown col → cannot prune
+  const { min, max } = stats[filter.col];
+
+  if (filter.op === ">") {
+    const val = isNaN(filter.value) ? filter.value : Number(filter.value);
+    return max != null && max > val;
+  }
+  if (filter.op === "<") {
+    const val = isNaN(filter.value) ? filter.value : Number(filter.value);
+    return min != null && min < val;
+  }
+  if (filter.op === "=") {
+    const val = filter.value;
+    return (
+      (min != null && min <= val) &&
+      (max != null && max >= val)
+    );
+  }
+  return true;
+}
+
+function readFile(path, decode = false, whereExpr = null) {
   const data = fs.readFileSync(path);
   const headerLen = data.readUInt32LE(0);
   const header = JSON.parse(data.slice(4, 4 + headerLen).toString());
   console.log("📄 Header:", header);
 
   let allRows = [];
-  header.rowGroups.forEach(rg => {
+  const filter = whereExpr ? parseFilter(whereExpr) : null;
+
+  header.rowGroups.forEach((rg, idx) => {
+    if (filter && !rowGroupMightMatch(rg.stats, filter)) {
+      console.log(`⏭️ Skipping RowGroup #${idx + 1} (rows=${rg.rowCount}), filter=${whereExpr}`);
+      return;
+    }
+
     const comp = data.slice(rg.offset, rg.offset + rg.compressedLength);
     const decomp = zlib.inflateSync(comp);
 
@@ -189,6 +225,7 @@ function readFile(path, decode = false) {
     console.log("✅ Decoded Rows:", JSON.stringify(allRows, null, 2));
   }
 }
+
 
 function loadCsv(filePath) {
   const text = fs.readFileSync(filePath, "utf8");

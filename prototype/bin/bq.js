@@ -26,13 +26,15 @@ program
 
 program
   .command("read <bqFile>")
-  .description("Read a .bq file (raw hex by default, decoded with --decode, stats with --stats)")
+  .description("Read a .bq file (raw hex by default, decoded with --decode, stats with --stats, filter with --where)")
   .option("-d, --decode", "Decode rows instead of showing raw hex")
   .option("-s, --stats", "Show row group statistics only")
+  .option("-w, --where <expr>", "Filter expression (e.g., \"Index > 500\" or \"Country = 'Macao'\")")
   .action((bqFile, opts) => {
     const resolved = path.resolve(bqFile);
+
     if (opts.stats) {
-      // Custom lightweight stats display
+      // existing stats code
       const fs = require("fs");
       const data = fs.readFileSync(resolved);
       const headerLen = data.readUInt32LE(0);
@@ -40,6 +42,10 @@ program
 
       console.log("📊 Row Group Statistics:");
       header.rowGroups.forEach((rg, idx) => {
+        if (!rg.stats) {
+          console.log(`RowGroup #${idx + 1} has no stats`);
+          return;
+        }
         console.log(`\nRowGroup #${idx + 1} (rows=${rg.rowCount}):`);
         Object.entries(rg.stats).forEach(([col, st]) => {
           console.log(
@@ -48,8 +54,10 @@ program
         });
       });
     } else {
-      readFile(resolved, opts.decode);
+      // pass filter down
+      readFile(resolved, opts.decode, opts.where);
     }
   });
+
 
 program.parse(process.argv);

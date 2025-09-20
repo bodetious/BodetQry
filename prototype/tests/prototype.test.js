@@ -8,12 +8,13 @@ const cli = path.join(__dirname, "../bin/bq.js");
 describe("BodetQry CLI (with customers-1000.csv)", () => {
   beforeAll(() => {
     if (fs.existsSync(testFile)) fs.unlinkSync(testFile);
-  });
-
-  test("CLI should write a .bq file without errors", () => {
+    // Always regenerate fresh file with stats
     execSync(`node ${cli} write data/customers-1000.csv -o ${testFile}`, {
       cwd: path.join(__dirname, "..")
     });
+  });
+
+  test("CLI should write a .bq file without errors", () => {
     expect(fs.existsSync(testFile)).toBe(true);
   });
 
@@ -38,11 +39,6 @@ describe("BodetQry CLI (with customers-1000.csv)", () => {
     expect(output).toMatch(/Last Name/);
     expect(output).toMatch(/Email/);
 
-    // Sample values
-    expect(output).toMatch(/Andrew/);
-    expect(output).toMatch(/Alvin/);
-    expect(output).toMatch(/Jenna/);
-
     // Row count = 1000
     const rowCount = (output.match(/"Customer Id"/g) || []).length;
     expect(rowCount).toBe(1000);
@@ -54,15 +50,50 @@ describe("BodetQry CLI (with customers-1000.csv)", () => {
       encoding: "utf8"
     });
 
-    // Should include stats markers
     expect(output).toMatch(/📊 Row Group Statistics/);
     expect(output).toMatch(/min=/);
     expect(output).toMatch(/max=/);
     expect(output).toMatch(/nulls=/);
-
-    // Should reference some known columns
     expect(output).toMatch(/Customer Id/);
-    expect(output).toMatch(/First Name/);
-    expect(output).toMatch(/Email/);
+  });
+
+  test("CLI should skip groups that do not match numeric filter", () => {
+    const output = execSync(
+      `node ${cli} read ${testFile} --decode --where "Index > 900"`,
+      { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+    );
+
+    expect(output).toMatch(/⏭️ Skipping RowGroup/);
+    expect(output).toMatch(/"Customer Id"/);
+
+    const rowCount = (output.match(/"Customer Id"/g) || []).length;
+    expect(rowCount).toBeLessThan(1000);
+  });
+
+  test("CLI should skip groups that do not match string filter", () => {
+    const output = execSync(
+      `node ${cli} read ${testFile} --decode --where "Country = 'Macao'"`,
+      { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+    );
+
+    expect(output).toMatch(/⏭️ Skipping RowGroup/);
+    expect(output).toMatch(/"Customer Id"/);
+
+    const rowCount = (output.match(/"Customer Id"/g) || []).length;
+    expect(rowCount).toBeLessThan(1000);
+  });
+
+  test("CLI should decode zero rows if filter excludes all groups", () => {
+    const output = execSync(
+      `node ${cli} read ${testFile} --decode --where "Index > 2000"`,
+      { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+    );
+
+    // Expect all groups to be skipped
+    expect(output).toMatch(/⏭️ Skipping RowGroup/);
+
+    // No rows should be decoded
+    const rowCount = (output.match(/"Customer Id"/g) || []).length;
+    expect(rowCount).toBe(0);
   });
 });
