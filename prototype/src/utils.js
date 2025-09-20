@@ -90,6 +90,30 @@ function writeFile(path, schema, rows, rowsPerGroup = 100) {
 
   for (let i = 0; i < rows.length; i += rowsPerGroup) {
     const group = rows.slice(i, i + rowsPerGroup);
+
+    // --- Column stats ---
+    const stats = {};
+    schema.forEach(col => {
+      const vals = group.map(r => r[col.name]);
+      const nonNullVals = vals.filter(v => v != null);
+
+      if (col.type === "int") {
+        stats[col.name] = {
+          min: nonNullVals.length ? Math.min(...nonNullVals) : null,
+          max: nonNullVals.length ? Math.max(...nonNullVals) : null,
+          nullCount: vals.length - nonNullVals.length
+        };
+      } else {
+        const sorted = nonNullVals.slice().sort();
+        stats[col.name] = {
+          min: sorted.length ? sorted[0] : null,
+          max: sorted.length ? sorted[sorted.length - 1] : null,
+          nullCount: vals.length - nonNullVals.length
+        };
+      }
+    });
+
+    // --- Encode + compress ---
     const encodedCols = schema.map(col => {
       const vals = group.map(r => r[col.name]);
       return encodeColumn(vals, col.type);
@@ -101,11 +125,12 @@ function writeFile(path, schema, rows, rowsPerGroup = 100) {
     headerBase.rowGroups.push({
       offset: 0,
       compressedLength: compressed.length,
-      rowCount: group.length
+      rowCount: group.length,
+      stats
     });
   }
 
-  // Compute final header with correct offsets
+  // --- Compute final header with offsets ---
   function buildHeaderWithOffsets(base) {
     const header = JSON.parse(JSON.stringify(base));
     let headerJson = Buffer.from(JSON.stringify(header));
