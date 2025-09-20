@@ -7,7 +7,8 @@
   "scripts": {
     "write": "node src/prototype.js write",
     "read": "node src/prototype.js read",
-    "read:decoded": "node src/prototype.js read decode"
+    "read:decoded": "node src/prototype.js read decode",
+    "test": "jest"
   },
   "keywords": [
     "bodetqry",
