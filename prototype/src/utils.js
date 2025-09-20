@@ -1,5 +1,6 @@
 const fs = require("fs");
 const zlib = require("zlib");
+const { parse } = require("csv-parse/sync");
 
 // ---------------------------------
 // Internal helpers
@@ -191,25 +192,26 @@ function readFile(path, decode = false) {
 
 function loadCsv(filePath) {
   const text = fs.readFileSync(filePath, "utf8");
-  const lines = text.trim().split("\n");
-  const headers = lines[0].split(",");
-  const rows = lines.slice(1).map(line => {
-    const parts = line.split(",");
-    const row = {};
-    headers.forEach((h, i) => {
-      const key = h.trim();
-      const val = parts[i] ? parts[i].trim() : null;
+  const records = parse(text, {
+    columns: true,
+    skip_empty_lines: true,
+    trim: true
+  });
+  const headers = Object.keys(records[0]);
+
+  // Convert numeric-looking strings to numbers
+  records.forEach(row => {
+    headers.forEach(h => {
+      const val = row[h];
       if (val === "" || val == null) {
-        row[key] = null;
+        row[h] = null;
       } else if (/^-?\d+$/.test(val)) {
-        row[key] = parseInt(val, 10);
-      } else {
-        row[key] = val;
+        row[h] = parseInt(val, 10);
       }
     });
-    return row;
   });
-  return { headers, rows };
+
+  return { headers, rows: records };
 }
 
 function inferSchema(headers, rows) {
