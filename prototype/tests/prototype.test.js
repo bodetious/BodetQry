@@ -32,19 +32,37 @@ describe("BodetQry CLI (with customers-1000.csv)", () => {
       encoding: "utf8"
     });
 
-    // Check headers
+    // Header fields
     expect(output).toMatch(/Customer Id/);
     expect(output).toMatch(/First Name/);
     expect(output).toMatch(/Last Name/);
     expect(output).toMatch(/Email/);
 
-    // Check sample values
+    // Sample values
     expect(output).toMatch(/Andrew/);
     expect(output).toMatch(/Alvin/);
     expect(output).toMatch(/Jenna/);
 
-    // Check exact row count
+    // Row count = 1000
     const rowCount = (output.match(/"Customer Id"/g) || []).length;
     expect(rowCount).toBe(1000);
+  });
+
+  test("CLI should display row group stats", () => {
+    const output = execSync(`node ${cli} read ${testFile} --stats`, {
+      cwd: path.join(__dirname, ".."),
+      encoding: "utf8"
+    });
+
+    // Should include stats markers
+    expect(output).toMatch(/📊 Row Group Statistics/);
+    expect(output).toMatch(/min=/);
+    expect(output).toMatch(/max=/);
+    expect(output).toMatch(/nulls=/);
+
+    // Should reference some known columns
+    expect(output).toMatch(/Customer Id/);
+    expect(output).toMatch(/First Name/);
+    expect(output).toMatch(/Email/);
   });
 });
