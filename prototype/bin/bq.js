@@ -26,15 +26,14 @@ program
 
 program
   .command("read <bqFile>")
-  .description("Read a .bq file (raw hex by default, decoded with --decode, stats with --stats, filter with --where)")
+  .description("Read a .bq file")
   .option("-d, --decode", "Decode rows instead of showing raw hex")
   .option("-s, --stats", "Show row group statistics only")
-  .option("-w, --where <expr>", "Filter expression (e.g., \"Index > 500\" or \"Country = 'Macao'\")")
+  .option("-w, --where <expr>", "Filter expression (e.g., \"Index > 500\")")
   .action((bqFile, opts) => {
     const resolved = path.resolve(bqFile);
 
     if (opts.stats) {
-      // existing stats code
       const fs = require("fs");
       const data = fs.readFileSync(resolved);
       const headerLen = data.readUInt32LE(0);
@@ -54,10 +53,8 @@ program
         });
       });
     } else {
-      // pass filter down
       readFile(resolved, opts.decode, opts.where);
     }
   });
-
 
 program.parse(process.argv);

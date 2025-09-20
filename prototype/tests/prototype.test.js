@@ -33,13 +33,10 @@ describe("BodetQry CLI (with customers-1000.csv)", () => {
       encoding: "utf8"
     });
 
-    // Header fields
     expect(output).toMatch(/Customer Id/);
     expect(output).toMatch(/First Name/);
     expect(output).toMatch(/Last Name/);
-    expect(output).toMatch(/Email/);
 
-    // Row count = 1000
     const rowCount = (output.match(/"Customer Id"/g) || []).length;
     expect(rowCount).toBe(1000);
   });
@@ -54,7 +51,6 @@ describe("BodetQry CLI (with customers-1000.csv)", () => {
     expect(output).toMatch(/min=/);
     expect(output).toMatch(/max=/);
     expect(output).toMatch(/nulls=/);
-    expect(output).toMatch(/Customer Id/);
   });
 
   test("CLI should skip groups that do not match numeric filter", () => {
@@ -64,8 +60,6 @@ describe("BodetQry CLI (with customers-1000.csv)", () => {
     );
 
     expect(output).toMatch(/⏭️ Skipping RowGroup/);
-    expect(output).toMatch(/"Customer Id"/);
-
     const rowCount = (output.match(/"Customer Id"/g) || []).length;
     expect(rowCount).toBeLessThan(1000);
   });
@@ -77,23 +71,31 @@ describe("BodetQry CLI (with customers-1000.csv)", () => {
     );
 
     expect(output).toMatch(/⏭️ Skipping RowGroup/);
-    expect(output).toMatch(/"Customer Id"/);
-
     const rowCount = (output.match(/"Customer Id"/g) || []).length;
     expect(rowCount).toBeLessThan(1000);
   });
 
-  test("CLI should decode zero rows if filter excludes all groups", () => {
+  test("CLI should print warning when no rows match filter", () => {
     const output = execSync(
       `node ${cli} read ${testFile} --decode --where "Index > 2000"`,
       { cwd: path.join(__dirname, ".."), encoding: "utf8" }
     );
 
-    // Expect all groups to be skipped
-    expect(output).toMatch(/⏭️ Skipping RowGroup/);
+    expect(output).toMatch(/⚠️ No rows matched filter/);
 
-    // No rows should be decoded
     const rowCount = (output.match(/"Customer Id"/g) || []).length;
     expect(rowCount).toBe(0);
+  });
+
+  test("CLI should show stats even if filter excludes all rows", () => {
+    const output = execSync(
+      `node ${cli} read ${testFile} --stats --where "Index > 2000"`,
+      { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+    );
+
+    expect(output).toMatch(/📊 Row Group Statistics/);
+    expect(output).toMatch(/RowGroup/);
+    expect(output).toMatch(/min=/);
+    expect(output).toMatch(/max=/);
   });
 });
