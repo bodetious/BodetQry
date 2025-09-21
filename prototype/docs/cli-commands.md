@@ -1,14 +1,15 @@
+
 # BodetQry CLI Commands
 
 ### Write CSV → .bq
 
-`bq write <csvFile> -o <outputFile> -g <rowsPerGroup>` 
+`bq write <csvFile> -o <outputFile> -g <rowsPerGroup>`
 
 -   **Description**: Encode a CSV file into `.bq` format.
     
 -   **Arguments**:
     
-    -   `<csvFile>`: Path to source CSV file.
+    -   `<csvFile>` → Path to source CSV file.
         
 -   **Options**:
     
@@ -25,35 +26,55 @@
 
 ### Read .bq
 
-`bq read <bqFile> [--decode]` 
+`bq read <bqFile> [--decode] [--stats] [--where <expr>]`
 
--   **Description**: Read a `.bq` file, showing raw row group bytes or fully decoded rows.
+-   **Description**: Read a `.bq` file, showing raw row group bytes, decoded rows, or row group statistics. Supports coarse filtering using row group metadata (min/max values).
     
 -   **Arguments**:
     
-    -   `<bqFile>`: Path to `.bq` file.
+    -   `<bqFile>` → Path to `.bq` file.
         
 -   **Options**:
     
     -   `-d, --decode` → Decode rows into JSON instead of showing raw hex.
-    -  `-s, --stats`    → Show row group statistics only
--   **Example (hex mode)**:
+        
+    -   `-s, --stats` → Show row group statistics only.
+        
+    -   `-w, --where <expr>` → Filter by simple expressions on column values.
+        
+        -   Supports `=`, `>`, `<`.
+            
+        -   Examples:
+            
+            -   `"Index > 500"`
+                
+            -   `"Country = 'Macao'"`
+                
+-   **Behavior**:
     
-    `bq read data/test.bq` 
+    -   Filters apply at the **row group level** (using min/max).
+        
+    -   Groups outside the filter range are skipped (`⏭️ Skipping RowGroup`).
+        
+    -   If all groups are skipped, a warning is shown: `⚠️ No rows matched filter`.
+        
+    -   Stats mode (`--stats`) always shows statistics, regardless of filters.
+        
+-   **Examples**:
     
--   **Example (decoded)**:
+    `bq read data/test.bq`
+    `bq read data/test.bq --decode`
+    `bq read data/test.bq --stats`
+    `bq read data/test.bq --decode --where  "Index > 900"`
+    `bq read data/test.bq --decode --where  "Country = 'Macao'"` 
     
-    `bq read data/test.bq --decode` 
-    
--   **Example (stats only)**:
-    
-    `bq read data/test.bq --stats` 
 
 ----------
 
 ### Meta
 
-`bq --help bq --version` 
+`bq --help`  
+`bq --version`
 
 -   **Description**: Show CLI help or version info.
     
