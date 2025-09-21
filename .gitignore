@@ -1,0 +1,19 @@
+# Node modules
+node_modules/
+
+# Logs
+prototype/tests/logs/
+
+# Generated BodetQry data files
+prototype/data/*.bq
+
+# Jest cache
+jest-cache/
+jest-*
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+
+# Explicitly keep package-lock.json for reproducibility
+!package-lock.json
