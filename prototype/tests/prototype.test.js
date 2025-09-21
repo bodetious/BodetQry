@@ -91,3 +91,23 @@ describe("BodetQry CLI (with customers-1000.csv)", () => {
     expect(output).toMatch(/nulls=/);
   });
 });
+
+  test("CLI should return only selected columns", () => {
+    const output = execSync(
+      `node ${cli} read ${testFile} --select "First Name,Last Name" --where "Index = 900"`,
+      { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+    );
+    expect(output).not.toMatch(/📄 Header/);
+    expect(output).toMatch(/"First Name":/);
+    expect(output).toMatch(/"Last Name":/);
+    expect(output).not.toMatch(/"Company":/);
+  });
+
+  test("CLI should project columns without filter", () => {
+    const output = execSync(
+      `node ${cli} read ${testFile} --select "Email"`,
+      { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+    );
+    expect(output).toMatch(/"Email":/);
+    expect(output).not.toMatch(/"Company":/);
+  });

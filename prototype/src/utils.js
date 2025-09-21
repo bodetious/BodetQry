@@ -1,119 +1,42 @@
 const fs = require("fs");
 const zlib = require("zlib");
-const { parse } = require("csv-parse/sync");
+const Papa = require("papaparse");
 
-// ---------------------------------
-// Encoding / Decoding helpers
-// ---------------------------------
-function encodeColumn(values, type) {
-  const buffers = [];
-  if (type === "int") {
-    if (values.every(v => v === values[0])) {
-      buffers.push(Buffer.from([1])); // RLE
-      const valBuf = Buffer.alloc(4); valBuf.writeInt32LE(values[0], 0);
-      const runBuf = Buffer.alloc(4); runBuf.writeUInt32LE(values.length, 0);
-      buffers.push(valBuf, runBuf);
-    } else {
-      buffers.push(Buffer.from([0]));
-      for (let v of values) {
-        const b = Buffer.alloc(4);
-        b.writeInt32LE(v, 0);
-        buffers.push(b);
-      }
-    }
-  } else if (type === "string") {
-    buffers.push(Buffer.from([0]));
-    for (let v of values) {
-      if (v == null) {
-        const len = Buffer.alloc(4); len.writeUInt32LE(0, 0);
-        buffers.push(len);
-      } else {
-        const strBuf = Buffer.from(String(v), "utf8");
-        const len = Buffer.alloc(4); len.writeUInt32LE(strBuf.length, 0);
-        buffers.push(len, strBuf);
-      }
-    }
-  }
-  return Buffer.concat(buffers);
+// --- CSV loader ---
+function loadCsv(csvPath) {
+  const csv = fs.readFileSync(csvPath, "utf8");
+  const parsed = Papa.parse(csv, { header: true });
+  return parsed.data.filter(r => Object.keys(r).length > 1); // remove trailing empty row
 }
 
-function decodeRowGroup(buffer, schema, rowCount) {
-  const rows = Array.from({ length: rowCount }, () => ({}));
-  let offset = 0;
-
-  for (let col of schema) {
-    const encodingType = buffer.readUInt8(offset);
-    offset += 1;
-
-    if (col.type === "int") {
-      if (encodingType === 1) {
-        const val = buffer.readInt32LE(offset); offset += 4;
-        const run = buffer.readUInt32LE(offset); offset += 4;
-        for (let i = 0; i < run; i++) rows[i][col.name] = val;
-      } else {
-        for (let i = 0; i < rowCount; i++) {
-          const v = buffer.readInt32LE(offset); offset += 4;
-          rows[i][col.name] = v;
-        }
-      }
-    } else if (col.type === "string") {
-      for (let i = 0; i < rowCount; i++) {
-        const strlen = buffer.readUInt32LE(offset); offset += 4;
-        if (strlen === 0) {
-          rows[i][col.name] = null;
-        } else {
-          const s = buffer.toString("utf8", offset, offset + strlen);
-          offset += strlen;
-          rows[i][col.name] = s;
-        }
-      }
-    }
-  }
-
-  return rows;
+// --- Schema inference ---
+function inferSchema(rows) {
+  return Object.keys(rows[0]).map(col => {
+    const sample = rows.find(r => r[col] !== undefined && r[col] !== "");
+    const type = sample && !isNaN(Number(sample[col])) ? "int" : "string";
+    return { name: col, type, nullable: true };
+  });
 }
 
-// ---------------------------------
-// Filtering logic
-// ---------------------------------
-function parseFilter(expr) {
-  const match = expr.match(/^(.+?)\s*(=|>|<)\s*['"]?(.+?)['"]?$/);
-  if (!match) return null;
-  return { col: match[1].trim(), op: match[2], value: match[3] };
+// --- Encode helper ---
+function encodeColumn(value, type) {
+  if (type === "int" && value !== "" && !isNaN(Number(value))) {
+    const buf = Buffer.alloc(4);
+    buf.writeInt32LE(Number(value), 0);
+    return buf;
+  }
+  const strBuf = Buffer.from(value || "", "utf8");
+  const len = Buffer.alloc(4);
+  len.writeUInt32LE(strBuf.length, 0);
+  return Buffer.concat([len, strBuf]);
 }
 
-function rowGroupMightMatch(stats, filter) {
-  if (!stats[filter.col]) return true;
-  const { min, max } = stats[filter.col];
-  if (filter.op === ">") {
-    const val = isNaN(filter.value) ? filter.value : Number(filter.value);
-    return max != null && max > val;
-  }
-  if (filter.op === "<") {
-    const val = isNaN(filter.value) ? filter.value : Number(filter.value);
-    return min != null && min < val;
-  }
-  if (filter.op === "=") {
-    const val = filter.value;
-    return (min != null && min <= val) && (max != null && max >= val);
-  }
-  return true;
-}
+// --- Write BQ file ---
+function writeFile(csvPath, outPath, rowsPerGroup = 100) {
+  const rows = loadCsv(csvPath);
+  const schema = inferSchema(rows);
 
-function rowMatchesFilter(row, filter) {
-  const val = row[filter.col];
-  if (val == null) return false;
-  if (filter.op === "=") return String(val) === filter.value;
-  if (filter.op === ">") return val > (isNaN(filter.value) ? filter.value : Number(filter.value));
-  if (filter.op === "<") return val < (isNaN(filter.value) ? filter.value : Number(filter.value));
-  return false;
-}
-
-// ---------------------------------
-// Public exports
-// ---------------------------------
-function writeFile(path, schema, rows, rowsPerGroup = 100) {
-  const headerBase = {
+  const header = {
     version: 1,
     columns: schema,
     rowGroups: [],
@@ -121,145 +44,189 @@ function writeFile(path, schema, rows, rowsPerGroup = 100) {
     totalRowCount: rows.length
   };
 
-  const rowGroupBlobs = [];
+  const buffers = [];
+  const headerPlaceholder = Buffer.alloc(4);
+  buffers.push(headerPlaceholder);
 
-  for (let i = 0; i < rows.length; i += rowsPerGroup) {
-    const group = rows.slice(i, i + rowsPerGroup);
-
-    // Stats
-    const stats = {};
+  rows.forEach((row, idx) => {
+    if (idx % rowsPerGroup === 0) {
+      header.rowGroups.push({
+        offset: 0,
+        compressedLength: 0,
+        rowCount: 0,
+        stats: {}
+      });
+    }
+    const rg = header.rowGroups[header.rowGroups.length - 1];
+    rg.rowCount++;
     schema.forEach(col => {
-      const vals = group.map(r => r[col.name]);
-      const nonNullVals = vals.filter(v => v != null);
-
-      if (col.type === "int") {
-        stats[col.name] = {
-          min: nonNullVals.length ? Math.min(...nonNullVals) : null,
-          max: nonNullVals.length ? Math.max(...nonNullVals) : null,
-          nullCount: vals.length - nonNullVals.length
-        };
-      } else {
-        const sorted = nonNullVals.slice().sort();
-        stats[col.name] = {
-          min: sorted.length ? sorted[0] : null,
-          max: sorted.length ? sorted[sorted.length - 1] : null,
-          nullCount: vals.length - nonNullVals.length
-        };
+      const val = row[col.name];
+      if (!rg.stats[col.name]) {
+        rg.stats[col.name] = { min: val, max: val, nulls: 0 };
+      }
+      if (val == null || val === "") rg.stats[col.name].nulls++;
+      else {
+        if (rg.stats[col.name].min > val) rg.stats[col.name].min = val;
+        if (rg.stats[col.name].max < val) rg.stats[col.name].max = val;
       }
     });
+  });
 
-    // Encode + compress
-    const encodedCols = schema.map(col => {
-      const vals = group.map(r => r[col.name]);
-      return encodeColumn(vals, col.type);
+  let offset = 0;
+  for (let i = 0; i < rows.length; i += rowsPerGroup) {
+    const chunk = rows.slice(i, i + rowsPerGroup);
+    const rg = header.rowGroups[Math.floor(i / rowsPerGroup)];
+
+    const rowBufs = [];
+    chunk.forEach(r => {
+      schema.forEach(col => {
+        rowBufs.push(encodeColumn(r[col.name], col.type));
+      });
     });
-    const uncompressed = Buffer.concat(encodedCols);
+    const uncompressed = Buffer.concat(rowBufs);
     const compressed = zlib.deflateSync(uncompressed);
-    rowGroupBlobs.push(compressed);
 
-    headerBase.rowGroups.push({
-      offset: 0,
-      compressedLength: compressed.length,
-      rowCount: group.length,
-      stats
-    });
+    rg.offset = offset;
+    rg.compressedLength = compressed.length;
+    offset += compressed.length;
+
+    buffers.push(compressed);
   }
 
-  // Add offsets
-  function buildHeaderWithOffsets(base) {
-    const header = JSON.parse(JSON.stringify(base));
-    let headerJson = Buffer.from(JSON.stringify(header));
-    let curOffset = 4 + headerJson.length;
-    header.rowGroups.forEach((rg, idx) => {
-      rg.offset = curOffset;
-      curOffset += rowGroupBlobs[idx].length;
-    });
-    return header;
-  }
+  const headerStr = JSON.stringify(header);
+  const headerBuf = Buffer.from(headerStr, "utf8");
+  headerPlaceholder.writeUInt32LE(headerBuf.length, 0);
+  buffers.splice(1, 0, headerBuf);
 
-  let header = headerBase;
-  let prevLength = 0;
-  let headerJson = Buffer.alloc(0);
-  for (let attempt = 0; attempt < 5; attempt++) {
-    header = buildHeaderWithOffsets(header);
-    headerJson = Buffer.from(JSON.stringify(header));
-    if (headerJson.length === prevLength) break;
-    prevLength = headerJson.length;
-  }
-
-  const headerLen = Buffer.alloc(4);
-  headerLen.writeUInt32LE(headerJson.length, 0);
-
-  const fileBuf = Buffer.concat([headerLen, headerJson, ...rowGroupBlobs]);
-  fs.writeFileSync(path, fileBuf);
-  console.log(`✅ File written to ${path}`);
+  fs.writeFileSync(outPath, Buffer.concat(buffers));
+  console.log(`✅ File written to ${outPath}`);
 }
 
-function readFile(path, decode = false, whereExpr = null) {
+// --- Decode helpers ---
+function decodeGroup(buf, schema) {
+  const rows = [];
+  let offset = 0;
+  while (offset < buf.length) {
+    const row = {};
+    schema.forEach(col => {
+      if (col.type === "int") {
+        row[col.name] = buf.readInt32LE(offset);
+        offset += 4;
+      } else {
+        const len = buf.readUInt32LE(offset);
+        offset += 4;
+        const str = buf.slice(offset, offset + len).toString("utf8");
+        row[col.name] = str;
+        offset += len;
+      }
+    });
+    rows.push(row);
+  }
+  return rows;
+}
+
+// --- Filter parsing ---
+function parseFilter(expr) {
+  if (!expr) return null;
+  const match = expr.match(/(.+?)\s*(=|>|<)\s*['"]?([^'"]+)['"]?/);
+  if (!match) return null;
+  return { col: match[1].trim(), op: match[2], value: match[3] };
+}
+
+function rowMatchesFilter(row, filter) {
+  const val = row[filter.col];
+  if (val == null) return false;
+  if (filter.op === "=") return String(val) === filter.value;
+  if (filter.op === ">") return Number(val) > Number(filter.value);
+  if (filter.op === "<") return Number(val) < Number(filter.value);
+  return false;
+}
+
+// --- Read BQ file ---
+function readFile(path, opts = {}) {
   const data = fs.readFileSync(path);
   const headerLen = data.readUInt32LE(0);
   const header = JSON.parse(data.slice(4, 4 + headerLen).toString());
+  const filter = parseFilter(opts.where);
 
-  const filter = whereExpr ? parseFilter(whereExpr) : null;
-  let allRows = [];
-  let matchedAny = false;
+  if (!opts.where && !opts.select && !opts.stats) {
+    console.log("📄 Header:", header);
+  }
 
-  header.rowGroups.forEach((rg, idx) => {
-    if (filter && !rowGroupMightMatch(rg.stats, filter)) {
-      console.log(`⏭️ Skipping RowGroup #${idx + 1} (rows=${rg.rowCount}), filter=${whereExpr}`);
-      return;
-    }
+  if (opts.stats) {
+    console.log("📊 Row Group Statistics:\n");
+    header.rowGroups.forEach((rg, i) => {
+      console.log(`RowGroup #${i + 1} (rows=${rg.rowCount}):`);
+      Object.entries(rg.stats).forEach(([col, st]) => {
+        console.log(
+          `  ${col.padEnd(20)} min=${st.min} | max=${st.max} | nulls=${st.nulls}`
+        );
+      });
+    });
+    return;
+  }
 
-    matchedAny = true;
-    const comp = data.slice(rg.offset, rg.offset + rg.compressedLength);
-    const decomp = zlib.inflateSync(comp);
-    const rows = decodeRowGroup(decomp, header.columns, rg.rowCount);
+  const results = [];
+  let anyDecoded = false;
+
+  header.rowGroups.forEach((rg, i) => {
+    const start = 4 + headerLen + rg.offset;
+    const compressed = data.slice(start, start + rg.compressedLength);
 
     if (filter) {
-      const pruned = rows.filter(r => rowMatchesFilter(r, filter));
-      allRows = allRows.concat(pruned);
-    } else if (decode) {
-      allRows = allRows.concat(rows);
+      const colStats = rg.stats[filter.col];
+      if (!colStats) return;
+      if (filter.op === "=") {
+        if (filter.value < colStats.min || filter.value > colStats.max) {
+          console.log(`⏭️ Skipping RowGroup #${i + 1} (rows=${rg.rowCount}), filter=${opts.where}`);
+          return;
+        }
+      }
+      if (filter.op === ">" && filter.value >= colStats.max) {
+        console.log(`⏭️ Skipping RowGroup #${i + 1} (rows=${rg.rowCount}), filter=${opts.where}`);
+        return;
+      }
+      if (filter.op === "<" && filter.value <= colStats.min) {
+        console.log(`⏭️ Skipping RowGroup #${i + 1} (rows=${rg.rowCount}), filter=${opts.where}`);
+        return;
+      }
+    }
+
+    const buf = zlib.inflateSync(compressed);
+    let rows = decodeGroup(buf, header.columns);
+
+    if (filter) {
+      rows = rows.filter(r => rowMatchesFilter(r, filter));
+    }
+
+    if (opts.select) {
+      const cols = opts.select.split(",").map(c => c.trim());
+      rows = rows.map(r => {
+        const obj = {};
+        cols.forEach(c => {
+          if (r.hasOwnProperty(c)) obj[c] = r[c];
+        });
+        return obj;
+      });
+    }
+
+    if (opts.decode || filter || opts.select) {
+      if (rows.length > 0) anyDecoded = true;
+      results.push(...rows);
     } else {
       console.log(
-        `RowGroup @${rg.offset}, rows=${rg.rowCount}, raw(hex)=${decomp.toString("hex")}`
+        `RowGroup @${rg.offset}, rows=${rg.rowCount}, raw(hex)=${compressed.toString("hex")}`
       );
     }
   });
 
-  if (filter) {
-    if (!matchedAny || allRows.length === 0) {
-      console.log("⚠️ No rows matched filter");
+  if (opts.decode || filter || opts.select) {
+    if (!anyDecoded) {
+      console.log(`⚠️ No rows matched filter`);
     } else {
-      console.log(JSON.stringify(allRows, null, 2));
+      console.log("✅ Decoded Rows:", JSON.stringify(results, null, 2));
     }
-  } else if (decode) {
-    console.log("✅ Decoded Rows:", JSON.stringify(allRows, null, 2));
-  } else {
-    console.log("📄 Header:", header);
   }
-}
-
-// CSV loader + schema inference
-function loadCsv(filePath) {
-  const text = fs.readFileSync(filePath, "utf8");
-  const records = parse(text, { columns: true, skip_empty_lines: true, trim: true });
-  const headers = Object.keys(records[0]);
-  records.forEach(row => {
-    headers.forEach(h => {
-      const val = row[h];
-      if (val === "" || val == null) row[h] = null;
-      else if (/^-?\d+$/.test(val)) row[h] = parseInt(val, 10);
-    });
-  });
-  return { headers, rows: records };
-}
-
-function inferSchema(headers, rows) {
-  return headers.map(h => {
-    const allNums = rows.every(r => typeof r[h] === "number" || r[h] === null);
-    return { name: h, type: allNums ? "int" : "string", nullable: true };
-  });
 }
 
 module.exports = { writeFile, readFile, loadCsv, inferSchema };
