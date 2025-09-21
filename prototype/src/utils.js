@@ -181,16 +181,16 @@ function readFile(path, opts = {}) {
       if (!colStats) return;
       if (filter.op === "=") {
         if (filter.value < colStats.min || filter.value > colStats.max) {
-          console.log(`⏭️ Skipping RowGroup #${i + 1} (rows=${rg.rowCount}), filter=${opts.where}`);
+          // console.log(`⏭️ Skipping RowGroup #${i + 1} (rows=${rg.rowCount}), filter=${opts.where}`);
           return;
         }
       }
       if (filter.op === ">" && filter.value >= colStats.max) {
-        console.log(`⏭️ Skipping RowGroup #${i + 1} (rows=${rg.rowCount}), filter=${opts.where}`);
+        // console.log(`⏭️ Skipping RowGroup #${i + 1} (rows=${rg.rowCount}), filter=${opts.where}`);
         return;
       }
       if (filter.op === "<" && filter.value <= colStats.min) {
-        console.log(`⏭️ Skipping RowGroup #${i + 1} (rows=${rg.rowCount}), filter=${opts.where}`);
+        // console.log(`⏭️ Skipping RowGroup #${i + 1} (rows=${rg.rowCount}), filter=${opts.where}`);
         return;
       }
     }
@@ -227,7 +227,8 @@ function readFile(path, opts = {}) {
     if (!anyDecoded) {
       console.log(`⚠️ No rows matched filter`);
     } else {
-      console.log("✅ Decoded Rows:", JSON.stringify(results, null, 2));
+      // console.log("✅ Decoded Rows:", JSON.stringify(results, null, 2));
+      console.log(JSON.stringify(results, null, 2));
     }
   }
 }

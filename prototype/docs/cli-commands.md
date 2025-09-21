@@ -62,11 +62,11 @@
         
 -   **Examples**:
     
-    `bq read data/test.bq`
-    `bq read data/test.bq --decode`
-    `bq read data/test.bq --stats`
-    `bq read data/test.bq --decode --where  "Index > 900"`
-    `bq read data/test.bq --decode --where  "Country = 'Macao'"` 
+    - `bq read data/test.bq`
+    - `bq read data/test.bq --decode`
+    - `bq read data/test.bq --stats`
+    - `bq read data/test.bq --decode --where  "Index > 900"`
+    - `bq read data/test.bq --decode --where  "Country = 'Macao'"` 
     
 
 ----------
