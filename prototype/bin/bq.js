@@ -50,9 +50,12 @@ program
         }
         console.log(`\nRowGroup #${idx + 1} (rows=${rg.rowCount}):`);
         Object.entries(rg.stats).forEach(([col, st]) => {
+          const minVal = typeof st.min === "number" ? st.min : String(st.min);
+          const maxVal = typeof st.max === "number" ? st.max : String(st.max);
           console.log(
-            `  ${col.padEnd(20)} min=${st.min} | max=${st.max} | nulls=${st.nulls}`
+            `  ${col.padEnd(20)} min=${minVal} | max=${maxVal} | nulls=${st.nulls}`
           );
+
         });
       });
     } else {

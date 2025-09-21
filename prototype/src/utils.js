@@ -62,12 +62,15 @@ function writeFile(csvPath, outPath, rowsPerGroup = 100) {
     schema.forEach(col => {
       const val = row[col.name];
       if (!rg.stats[col.name]) {
-        rg.stats[col.name] = { min: val, max: val, nulls: 0 };
+        const initVal = (col.type === "int") ? Number(val) : val;
+        rg.stats[col.name] = { min: initVal, max: initVal, nulls: 0 };
+
       }
       if (val == null || val === "") rg.stats[col.name].nulls++;
       else {
-        if (rg.stats[col.name].min > val) rg.stats[col.name].min = val;
-        if (rg.stats[col.name].max < val) rg.stats[col.name].max = val;
+        const cmpVal = (col.type === "int") ? Number(val) : val;
+        if (rg.stats[col.name].min > cmpVal) rg.stats[col.name].min = cmpVal;
+        if (rg.stats[col.name].max < cmpVal) rg.stats[col.name].max = cmpVal;
       }
     });
   });
