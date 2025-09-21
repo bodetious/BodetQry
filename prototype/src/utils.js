@@ -3,11 +3,10 @@ const zlib = require("zlib");
 const { parse } = require("csv-parse/sync");
 
 // ---------------------------------
-// Internal helpers
+// Encoding / Decoding helpers
 // ---------------------------------
 function encodeColumn(values, type) {
   const buffers = [];
-
   if (type === "int") {
     if (values.every(v => v === values[0])) {
       buffers.push(Buffer.from([1])); // RLE
@@ -15,7 +14,7 @@ function encodeColumn(values, type) {
       const runBuf = Buffer.alloc(4); runBuf.writeUInt32LE(values.length, 0);
       buffers.push(valBuf, runBuf);
     } else {
-      buffers.push(Buffer.from([0])); // Raw
+      buffers.push(Buffer.from([0]));
       for (let v of values) {
         const b = Buffer.alloc(4);
         b.writeInt32LE(v, 0);
@@ -35,7 +34,6 @@ function encodeColumn(values, type) {
       }
     }
   }
-
   return Buffer.concat(buffers);
 }
 
@@ -85,9 +83,8 @@ function parseFilter(expr) {
 }
 
 function rowGroupMightMatch(stats, filter) {
-  if (!stats[filter.col]) return true; // unknown column → don’t prune
+  if (!stats[filter.col]) return true;
   const { min, max } = stats[filter.col];
-
   if (filter.op === ">") {
     const val = isNaN(filter.value) ? filter.value : Number(filter.value);
     return max != null && max > val;
@@ -98,12 +95,18 @@ function rowGroupMightMatch(stats, filter) {
   }
   if (filter.op === "=") {
     const val = filter.value;
-    return (
-      (min != null && min <= val) &&
-      (max != null && max >= val)
-    );
+    return (min != null && min <= val) && (max != null && max >= val);
   }
   return true;
+}
+
+function rowMatchesFilter(row, filter) {
+  const val = row[filter.col];
+  if (val == null) return false;
+  if (filter.op === "=") return String(val) === filter.value;
+  if (filter.op === ">") return val > (isNaN(filter.value) ? filter.value : Number(filter.value));
+  if (filter.op === "<") return val < (isNaN(filter.value) ? filter.value : Number(filter.value));
+  return false;
 }
 
 // ---------------------------------
@@ -123,7 +126,7 @@ function writeFile(path, schema, rows, rowsPerGroup = 100) {
   for (let i = 0; i < rows.length; i += rowsPerGroup) {
     const group = rows.slice(i, i + rowsPerGroup);
 
-    // --- Column stats ---
+    // Stats
     const stats = {};
     schema.forEach(col => {
       const vals = group.map(r => r[col.name]);
@@ -145,7 +148,7 @@ function writeFile(path, schema, rows, rowsPerGroup = 100) {
       }
     });
 
-    // --- Encode + compress ---
+    // Encode + compress
     const encodedCols = schema.map(col => {
       const vals = group.map(r => r[col.name]);
       return encodeColumn(vals, col.type);
@@ -162,24 +165,21 @@ function writeFile(path, schema, rows, rowsPerGroup = 100) {
     });
   }
 
-  // --- Compute final header with offsets ---
+  // Add offsets
   function buildHeaderWithOffsets(base) {
     const header = JSON.parse(JSON.stringify(base));
     let headerJson = Buffer.from(JSON.stringify(header));
     let curOffset = 4 + headerJson.length;
-
     header.rowGroups.forEach((rg, idx) => {
       rg.offset = curOffset;
       curOffset += rowGroupBlobs[idx].length;
     });
-
     return header;
   }
 
   let header = headerBase;
   let prevLength = 0;
   let headerJson = Buffer.alloc(0);
-
   for (let attempt = 0; attempt < 5; attempt++) {
     header = buildHeaderWithOffsets(header);
     headerJson = Buffer.from(JSON.stringify(header));
@@ -199,10 +199,9 @@ function readFile(path, decode = false, whereExpr = null) {
   const data = fs.readFileSync(path);
   const headerLen = data.readUInt32LE(0);
   const header = JSON.parse(data.slice(4, 4 + headerLen).toString());
-  console.log("📄 Header:", header);
 
-  let allRows = [];
   const filter = whereExpr ? parseFilter(whereExpr) : null;
+  let allRows = [];
   let matchedAny = false;
 
   header.rowGroups.forEach((rg, idx) => {
@@ -214,47 +213,45 @@ function readFile(path, decode = false, whereExpr = null) {
     matchedAny = true;
     const comp = data.slice(rg.offset, rg.offset + rg.compressedLength);
     const decomp = zlib.inflateSync(comp);
+    const rows = decodeRowGroup(decomp, header.columns, rg.rowCount);
 
-    if (!decode) {
+    if (filter) {
+      const pruned = rows.filter(r => rowMatchesFilter(r, filter));
+      allRows = allRows.concat(pruned);
+    } else if (decode) {
+      allRows = allRows.concat(rows);
+    } else {
       console.log(
         `RowGroup @${rg.offset}, rows=${rg.rowCount}, raw(hex)=${decomp.toString("hex")}`
       );
-    } else {
-      const rows = decodeRowGroup(decomp, header.columns, rg.rowCount);
-      allRows = allRows.concat(rows);
     }
   });
 
-  if (decode) {
-    if (!matchedAny) {
+  if (filter) {
+    if (!matchedAny || allRows.length === 0) {
       console.log("⚠️ No rows matched filter");
     } else {
-      console.log("✅ Decoded Rows:", JSON.stringify(allRows, null, 2));
+      console.log(JSON.stringify(allRows, null, 2));
     }
+  } else if (decode) {
+    console.log("✅ Decoded Rows:", JSON.stringify(allRows, null, 2));
+  } else {
+    console.log("📄 Header:", header);
   }
 }
 
+// CSV loader + schema inference
 function loadCsv(filePath) {
   const text = fs.readFileSync(filePath, "utf8");
-  const records = parse(text, {
-    columns: true,
-    skip_empty_lines: true,
-    trim: true
-  });
+  const records = parse(text, { columns: true, skip_empty_lines: true, trim: true });
   const headers = Object.keys(records[0]);
-
-  // Convert numeric-looking strings to numbers
   records.forEach(row => {
     headers.forEach(h => {
       const val = row[h];
-      if (val === "" || val == null) {
-        row[h] = null;
-      } else if (/^-?\d+$/.test(val)) {
-        row[h] = parseInt(val, 10);
-      }
+      if (val === "" || val == null) row[h] = null;
+      else if (/^-?\d+$/.test(val)) row[h] = parseInt(val, 10);
     });
   });
-
   return { headers, rows: records };
 }
 
@@ -265,9 +262,4 @@ function inferSchema(headers, rows) {
   });
 }
 
-module.exports = {
-  writeFile,
-  readFile,
-  loadCsv,
-  inferSchema
-};
+module.exports = { writeFile, readFile, loadCsv, inferSchema };

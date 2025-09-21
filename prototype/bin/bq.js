@@ -6,7 +6,7 @@ const { writeFile, readFile, loadCsv, inferSchema } = require("../src/utils");
 program
   .name("bq")
   .description("BodetQry CLI")
-  .version("0.2.0");
+  .version("0.3.0");
 
 program
   .command("write <csvFile>")
@@ -32,6 +32,9 @@ program
   .option("-w, --where <expr>", "Filter expression (e.g., \"Index > 500\")")
   .action((bqFile, opts) => {
     const resolved = path.resolve(bqFile);
+
+    // If --where is provided, force decode mode
+    if (opts.where) opts.decode = true;
 
     if (opts.stats) {
       const fs = require("fs");
