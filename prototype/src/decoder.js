@@ -1,4 +1,3 @@
-// --- Apply null bitmap to decoded values ---
 function applyNullBitmap(decoded, bitmap, rowCount) {
   const results = [];
   let di = 0;
@@ -24,7 +23,7 @@ function countNulls(bitmap, rowCount) {
   return count;
 }
 
-// --- Raw decode ---
+// --- Raw ---
 function decodeRaw(buf, type, nonNullCount) {
   const values = [];
   let offset = 0;
@@ -43,19 +42,59 @@ function decodeRaw(buf, type, nonNullCount) {
   return { values, consumed: offset };
 }
 
-// --- RLE decode (stub) ---
+// --- RLE ---
 function decodeRLE(buf, type, nonNullCount) {
-  // TODO implement real RLE decode
-  return decodeRaw(buf, type, nonNullCount);
+  const values = [];
+  let offset = 0;
+  while (values.length < nonNullCount) {
+    const run = buf.readUInt32LE(offset);
+    offset += 4;
+    let v;
+    if (type === "int") {
+      v = buf.readInt32LE(offset);
+      offset += 4;
+    } else {
+      const len = buf.readUInt32LE(offset);
+      offset += 4;
+      v = buf.slice(offset, offset + len).toString("utf8");
+      offset += len;
+    }
+    for (let i = 0; i < run; i++) values.push(v);
+  }
+  return { values, consumed: offset };
 }
 
-// --- Dictionary decode (stub) ---
+// --- Dictionary ---
 function decodeDict(buf, type, nonNullCount) {
-  // TODO implement real Dict decode
-  return decodeRaw(buf, type, nonNullCount);
+  let offset = 0;
+  const dictLen = buf.readUInt32LE(offset);
+  offset += 4;
+
+  const dict = [];
+  for (let i = 0; i < dictLen; i++) {
+    if (type === "int") {
+      dict.push(buf.readInt32LE(offset));
+      offset += 4;
+    } else {
+      const len = buf.readUInt32LE(offset);
+      offset += 4;
+      const str = buf.slice(offset, offset + len).toString("utf8");
+      dict.push(str);
+      offset += len;
+    }
+  }
+
+  const values = [];
+  while (values.length < nonNullCount) {
+    const ix = buf.readUInt32LE(offset);
+    offset += 4;
+    values.push(dict[ix]);
+  }
+
+  return { values, consumed: offset };
 }
 
-// --- Decode one column group ---
+// --- Column group ---
 function decodeColumnGroup(buf, type, rowCount) {
   let offset = 0;
 
